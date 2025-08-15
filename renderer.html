@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>GPT Threads</title>
+  <style>
+    body { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; margin: 10px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .stack { display:flex; flex-direction:column; gap:6px; }
+    .card { border:1px solid #e5e7eb; border-radius:10px; padding:10px; margin:8px 0; }
+    textarea { width:100%; min-height:60px; }
+    input[type=text] { width:100%; }
+    .msgs { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px; max-height:140px; overflow:auto; white-space:pre-wrap; }
+    .small { opacity:.7; font-size:12px; }
+    .btn { padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; cursor:pointer; }
+  </style>
+</head>
+<body>
+  <h3>GPT Threads (Sidebar)</h3>
+
+  <div class="card">
+    <div class="stack">
+      <label>OpenAI API Key</label>
+      <input id="apiKey" type="text" placeholder="sk-..." />
+      <div class="row">
+        <label>Model</label>
+        <select id="model">
+          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-5-mini">gpt-5-mini</option>
+          <option value="gpt-5">gpt-5</option>
+        </select>
+        <button class="btn" id="save">Save</button>
+      </div>
+      <div class="small" id="status"></div>
+    </div>
+  </div>
+
+  <div class="row">
+    <button class="btn" id="newThread">+ New mini-thread</button>
+  </div>
+
+  <div id="list"></div>
+
+  <script>
+    const api = window.GPTThreads;
+    let state = { apiKey:'', model:'gpt-4.1-mini', threads: [] };
+
+    const el = (id) => document.getElementById(id);
+    const list = el('list');
+
+    function save() { return api.setState(state); }
+    async function load() {
+      state = await api.getState();
+      el('apiKey').value = state.apiKey || '';
+      el('model').value = state.model || 'gpt-4.1-mini';
+      el('status').textContent = state.apiKey ? 'API key is set.' : 'No key set.';
+      render();
+    }
+
+    function render() {
+      list.innerHTML = '';
+      if (!state.threads.length) {
+        list.innerHTML = '<div class="small">No mini-threads yet. Click “New mini-thread”.</div>';
+        return;
+      }
+      state.threads.forEach((t, i) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="row" style="justify-content:space-between">
+            <strong>${t.title || 'Thread ' + (i+1)}</strong>
+            <div class="small">T${i+1}</div>
+          </div>
+
+          <div class="stack">
+            <label>Anchor text (for Jump)</label>
+            <input type="text" class="anchor" value="${(t.anchor||'').replace(/"/g,'&quot;')}" placeholder="Paste a long, unique snippet…">
+          </div>
+
+          <div class="stack" style="margin-top:6px">
+            <label>Ask</label>
+            <textarea class="ask" placeholder="Paste context or write a question…"></textarea>
+            <div class="row">
+              <button class="btn askBtn">Ask</button>
+              <button class="btn jumpBtn">Jump</button>
+              <button class="btn nextBtn">Next match</button>
+            </div>
+          </div>
+
+          <div class="stack" style="margin-top:6px">
+            <label>Messages</label>
+            <div class="msgs">${(t.messages||[]).map(m=>`${m.role==='user'?'You':'GPT'}: ${m.text}`).join('\n') || '(empty)'}</div>
+          </div>
+        `;
+        // wire up
+        card.querySelector('.anchor').addEventListener('change', async (e)=>{
+          t.anchor = e.target.value.trim();
+          await save();
+        });
+
+        card.querySelector('.askBtn').addEventListener('click', async ()=>{
+          const area = card.querySelector('.ask');
+          const user = area.value.trim(); if (!user) return;
+          area.value = '';
+          (t.messages ||= []).push({ role:'user', text:user, ts: Date.now() });
+          await save(); render();
+
+          // Build Context from anchor only (simple); you can expand to a separate context box if you want
+          const context = t.anchor || '';
+          const history = (t.messages || []).slice(-10);
+
+          try {
+            const { text } = await api.ask({
+              apiKey: state.apiKey,
+              model: state.model,
+              context, history, user
+            });
+            (t.messages ||= []).push({ role:'assistant', text, ts: Date.now() });
+            await save(); render();
+          } catch (e) {
+            (t.messages ||= []).push({ role:'assistant', text: `[error] ${e.message || e}`, ts: Date.now() });
+            await save(); render();
+          }
+        });
+
+        card.querySelector('.jumpBtn').addEventListener('click', async ()=>{
+          if (!t.anchor) return;
+          try { await api.jumpToAnchor({ anchor: t.anchor, targetApp: 'ChatGPT' }); } catch {}
+        });
+
+        card.querySelector('.nextBtn').addEventListener('click', async ()=>{
+          try { await api.jumpNext({ targetApp: 'ChatGPT' }); } catch {}
+        });
+
+        list.appendChild(card);
+      });
+    }
+
+    // header controls
+    el('save').addEventListener('click', async ()=>{
+      state.apiKey = el('apiKey').value.trim();
+      state.model = el('model').value;
+      await save();
+      el('status').textContent = state.apiKey ? 'API key is set.' : 'No key set.';
+    });
+
+    el('newThread').addEventListener('click', async ()=>{
+      state.threads.push({ title: `Thread ${state.threads.length+1}`, anchor: '', messages: [] });
+      await save(); render();
+    });
+
+    load();
+  </script>
+</body>
+</html>
