@@ -23,12 +23,38 @@ function createWindow() {
   win.loadFile('renderer.html');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  app.commandLine.appendSwitch('ignore-certificate-errors');
+  createWindow();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
 // --- Storage IPC ---
-ipcMain.handle('getState', () => store.get('state', { apiKey: '', model: 'gpt-4.1-mini', threads: [] }));
+ipcMain.handle('getState', () => {
+  const state = store.get('state', {});
+  // V1->V2 migration: root threads to a default conversation
+  if (Array.isArray(state.threads) && state.threads.length > 0 && !state.conversations) {
+    const convo = { id: `convo-${Date.now()}`, name: 'Default', threads: state.threads };
+    const nextState = {
+      apiKey: state.apiKey || '',
+      model: state.model || 'gpt-4.1-mini',
+      conversations: [convo],
+      activeConvoId: convo.id,
+      targetApp: 'ChatGPT',
+    };
+    store.set('state', nextState);
+    return nextState;
+  }
+  return {
+    apiKey: '',
+    model: 'gpt-4.1-mini',
+    conversations: [],
+    activeConvoId: null,
+    targetApp: 'ChatGPT',
+    ...state,
+  };
+});
 ipcMain.handle('setState', (e, next) => { store.set('state', next); return true; });
 
 // --- OpenAI Responses API (non-stream for simplicity) ---
@@ -75,26 +101,92 @@ function runOSA(script) {
 
 ipcMain.handle('jumpToAnchor', async (e, { anchor, targetApp }) => {
   const appName = targetApp || 'ChatGPT';
-  const esc = s => s.replace(/\\/g,'\\\\').replace(/"/g,'\\"');
-  const script = `
-    tell application "${esc(appName)}" to activate
-    tell application "System Events"
-      keystroke "f" using {command down}
-      delay 0.05
-      keystroke "${esc(anchor)}"
-      key code 36 -- Return
-    end tell
+  const esc = s => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  let script;
+
+  const activationScript = `
+    if application "${esc(appName)}" is not running then
+      launch application "${esc(appName)}"
+      delay 1.5
+    end if
+    activate application "${esc(appName)}"
   `;
+
+  if (appName === 'ChatGPT') {
+    script = `
+      ${activationScript}
+      tell application "System Events"
+        tell process "ChatGPT"
+          tell menu bar 1
+            tell menu bar item "Edit"
+              tell menu "Edit"
+                tell menu item "Find"
+                  tell menu "Find"
+                    click menu item "Find…"
+                  end tell
+                end tell
+              end tell
+            end tell
+          end tell
+          delay 0.2
+          keystroke "${esc(anchor)}"
+          key code 36 -- Return
+        end tell
+      end tell
+    `;
+  } else {
+    script = `
+      ${activationScript}
+      tell application "System Events"
+        keystroke "f" using {command down}
+        delay 0.2
+        keystroke "${esc(anchor)}"
+        key code 36 -- Return
+      end tell
+    `;
+  }
   await runOSA(script);
   return true;
 });
 
 ipcMain.handle('jumpNext', async (e, { targetApp }) => {
   const appName = targetApp || 'ChatGPT';
-  const script = `
-    tell application "${appName}" to activate
-    tell application "System Events" to keystroke "g" using {command down}
+  const esc = s => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  let script;
+
+  const activationScript = `
+    if application "${esc(appName)}" is not running then
+      launch application "${esc(appName)}"
+      delay 1.5
+    end if
+    activate application "${esc(appName)}"
   `;
+
+  if (appName === 'ChatGPT') {
+    script = `
+      ${activationScript}
+      tell application "System Events"
+        tell process "ChatGPT"
+          tell menu bar 1
+            tell menu bar item "Edit"
+              tell menu "Edit"
+                tell menu item "Find"
+                  tell menu "Find"
+                    click menu item "Find Next"
+                  end tell
+                end tell
+              end tell
+            end tell
+          end tell
+        end tell
+      end tell
+    `;
+  } else {
+    script = `
+      ${activationScript}
+      tell application "System Events" to keystroke "g" using {command down}
+    `;
+  }
   await runOSA(script);
   return true;
 });

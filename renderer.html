@@ -4,152 +4,407 @@
   <meta charset="utf-8" />
   <title>GPT Threads</title>
   <style>
-    body { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; margin: 10px; }
+    :root{
+      --left-w: 280px;
+      --right-w: 320px;
+      --gutter: 6px;
+    }
+    * { box-sizing: border-box; }
+    body { font: 14px system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; }
+    /* Header */
+    .toolbar{
+      position:fixed; inset:0 0 auto 0; height:40px;
+      display:flex; align-items:center; gap:8px; padding:0 8px;
+      border-bottom:1px solid #e5e7eb; background:#fff; z-index:2;
+    }
+    .toolbar .spacer{ flex:1; }
+    .btn { padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; cursor:pointer; }
+    .btn.small { padding:4px 8px; font-size:12px; }
+    label { font-size:12px; color:#374151; }
+
+    /* Grid layout */
+    .layout{
+      position:fixed; inset:40px 0 0 0; /* leave space for header */
+      display:grid; grid-template-columns: var(--left-w) var(--gutter) 1fr;
+      grid-template-rows: 1fr; overflow:hidden; background:#fafafa;
+    }
+    .panel{ overflow:auto; background:#fff; }
+    #left { grid-column:1; border-right:1px solid #e5e7eb; }
+    #center{ grid-column:3; overflow:auto; padding:10px; }
+    .resizer{ cursor:col-resize; }
+    #left-resize  { grid-column:2; }
+
+    /* Collapsed states */
+    .panel[aria-expanded="false"]{ display:none; }
+    .layout.collapsed-left{ grid-template-columns: 0px var(--gutter) 1fr; }
+
+    /* Left: thread list */
+    .sidebar{ padding:10px; }
+    .thread-item{ padding:8px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:8px; cursor:pointer; background:#fff; display:flex; justify-content:space-between; align-items:center; }
+    .thread-item.active{ border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.1); }
+    .thread-title{ font-weight:600; }
+    .muted{ font-size:12px; color:#6b7280; }
+
+    /* Center: cards */
     .row { display:flex; gap:8px; align-items:center; }
     .stack { display:flex; flex-direction:column; gap:6px; }
-    .card { border:1px solid #e5e7eb; border-radius:10px; padding:10px; margin:8px 0; }
-    textarea { width:100%; min-height:60px; }
-    input[type=text] { width:100%; }
-    .msgs { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px; max-height:140px; overflow:auto; white-space:pre-wrap; }
+    .card { border:1px solid #e5e7eb; border-radius:10px; padding:10px; margin:8px 0; background:#fff; }
+    textarea { width:100%; min-height:80px; font: 13px monospace; }
+    input[type=text], input[type=password], select { width:100%; padding: 4px 6px; }
     .small { opacity:.7; font-size:12px; }
-    .btn { padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; cursor:pointer; }
+
+    /* Messages */
+    .msgs { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px; max-height:300px; overflow:auto; }
+    .msg{ padding:8px 12px; margin:6px 0; border-radius:10px; max-width:72ch; white-space:pre-wrap; }
+    .msg--user{ margin-left:auto; background:#e9f5ff; }
+    .msg--ai  { margin-right:auto; background:#f5f5f7; }
   </style>
 </head>
 <body>
-  <h3>GPT Threads (Sidebar)</h3>
-
-  <div class="card">
-    <div class="stack">
-      <label>OpenAI API Key</label>
-      <input id="apiKey" type="text" placeholder="sk-..." />
-      <div class="row">
-        <label>Model</label>
-        <select id="model">
-          <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-          <option value="gpt-4o-mini">gpt-4o-mini</option>
-          <option value="gpt-5-mini">gpt-5-mini</option>
-          <option value="gpt-5">gpt-5</option>
-        </select>
-        <button class="btn" id="save">Save</button>
-      </div>
-      <div class="small" id="status"></div>
+  <!-- Header -->
+  <header class="toolbar">
+    <button id="toggle-left"  class="btn small" aria-controls="left"  aria-expanded="true">☰</button>
+    <div id="convo-display" class="row">
+      <select id="convoSelect"></select>
+      <button id="newConvo" class="btn small">+ New</button>
+      <button id="editConvo" class="btn small">Rename</button>
+      <button id="deleteConvo" class="btn small">Delete</button>
     </div>
-  </div>
+    <div id="convo-edit" class="row" style="display:none;">
+      <input type="text" id="convoNameInput" placeholder="New name..." />
+      <button id="saveConvoName" class="btn small">Save</button>
+      <button id="cancelConvoName" class="btn small">Cancel</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="row">
+      <label>Target App</label>
+      <select id="targetApp">
+        <option>ChatGPT</option>
+        <option>Google Chrome</option>
+        <option>Safari</option>
+        <option>Arc</option>
+      </select>
+    </div>
+  </header>
 
-  <div class="row">
-    <button class="btn" id="newThread">+ New mini-thread</button>
-  </div>
+  <!-- Grid -->
+  <div id="app" class="layout">
+    <aside id="left" class="panel" aria-expanded="true">
+      <div class="sidebar">
+        <div class="card">
+          <div class="stack">
+            <label>OpenAI API Key</label>
+            <input id="apiKey" type="password" placeholder="sk-..." />
+            <div class="row">
+              <label>Model</label>
+              <select id="model">
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                <option value="gpt-4-turbo">gpt-4-turbo</option>
+                <option value="gpt-4">gpt-4</option>
+              </select>
+            </div>
+            <div class="row">
+              <div class="small" id="status" style="text-align:right; flex:1"></div>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:8px">
+          <button class="btn" id="newThread">+ New thread</button>
+        </div>
+        <div id="threadList"></div>
+      </div>
+    </aside>
+    <div id="left-resize" class="resizer"></div>
 
-  <div id="list"></div>
+    <main id="center" class="panel">
+      <div id="centerContent"></div>
+    </main>
+  </div>
 
   <script>
     const api = window.GPTThreads;
-    let state = { apiKey:'', model:'gpt-4.1-mini', threads: [] };
+    const qs = (s)=>document.querySelector(s);
+    const byId = (id)=>document.getElementById(id);
 
-    const el = (id) => document.getElementById(id);
-    const list = el('list');
+    let state = {
+      apiKey:'', model:'gpt-4o-mini',
+      conversations: [],
+      activeConvoId: null,
+      activeThreadId: null,
+      targetApp: 'ChatGPT',
+    };
 
-    function save() { return api.setState(state); }
-    async function load() {
-      state = await api.getState();
-      el('apiKey').value = state.apiKey || '';
-      el('model').value = state.model || 'gpt-4.1-mini';
-      el('status').textContent = state.apiKey ? 'API key is set.' : 'No key set.';
-      render();
+    async function save(){
+      byId('status').textContent = 'Saving...';
+      await api.setState(state);
+      byId('status').textContent = 'Saved.';
+      setTimeout(()=>byId('status').textContent = '', 1500);
+    }
+    async function load(){
+      const s = await api.getState();
+      state = { ...state, ...s };
+      if (state.conversations.length > 0 && !state.activeConvoId) {
+        state.activeConvoId = state.conversations[0].id;
+      }
+      renderAll();
     }
 
-    function render() {
+    // --- Panel Management ---
+    const app = qs('#app'), left = qs('#left'), tLeft = byId('toggle-left');
+    function setCollapsed(side, collapsed){
+      left.setAttribute('aria-expanded', String(!collapsed));
+      tLeft.setAttribute('aria-expanded', String(!collapsed));
+      app.classList.toggle('collapsed-left', collapsed);
+    }
+    tLeft.addEventListener('click', ()=>setCollapsed('left', tLeft.getAttribute('aria-expanded') === 'true'));
+    function dragResize(handle, side){
+      let startX, startW;
+      const onMove = (e)=>{
+        const dx = e.clientX - startX;
+        const w = Math.max(160, startW + dx);
+        document.documentElement.style.setProperty('--left-w', w+'px');
+      };
+      const onUp = ()=>{ window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+      handle.addEventListener('mousedown', (e)=>{
+        startX = e.clientX;
+        startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--left-w'));
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+      });
+    }
+    dragResize(qs('#left-resize'), 'left');
+
+    // --- Render Functions ---
+    function getActiveConvo() {
+      if (!Array.isArray(state.conversations)) return null;
+      return state.conversations.find(c => c.id === state.activeConvoId);
+    }
+    function getActiveThread() {
+      const convo = getActiveConvo();
+      if (!convo || !Array.isArray(convo.threads)) return null;
+      return convo.threads.find(t => t.id === state.activeThreadId);
+    }
+
+    function renderHeader() {
+      const convos = Array.isArray(state.conversations) ? state.conversations : [];
+      byId('convoSelect').innerHTML = convos.map(c => `<option value="${c.id}" ${c.id === state.activeConvoId ? 'selected' : ''}>${c.name}</option>`).join('');
+      if (convos.length === 0) {
+        byId('convoSelect').innerHTML = `<option>No conversations</option>`;
+      }
+    }
+
+    function renderSidebar(){
+      byId('apiKey').value = state.apiKey || '';
+      byId('model').value = state.model || 'gpt-4o-mini';
+      byId('targetApp').value = state.targetApp || 'ChatGPT';
+
+      const list = byId('threadList');
       list.innerHTML = '';
-      if (!state.threads.length) {
-        list.innerHTML = '<div class="small">No mini-threads yet. Click “New mini-thread”.</div>';
+      const convo = getActiveConvo();
+      if (!convo || !Array.isArray(convo.threads) || !convo.threads.length){
+        list.innerHTML = `<div class="muted">${!convo ? 'Create a conversation.' : 'No threads yet.'}</div>`;
         return;
       }
-      state.threads.forEach((t, i) => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-          <div class="row" style="justify-content:space-between">
-            <strong>${t.title || 'Thread ' + (i+1)}</strong>
-            <div class="small">T${i+1}</div>
-          </div>
-
-          <div class="stack">
-            <label>Anchor text (for Jump)</label>
-            <input type="text" class="anchor" value="${(t.anchor||'').replace(/"/g,'&quot;')}" placeholder="Paste a long, unique snippet…">
-          </div>
-
-          <div class="stack" style="margin-top:6px">
-            <label>Ask</label>
-            <textarea class="ask" placeholder="Paste context or write a question…"></textarea>
-            <div class="row">
-              <button class="btn askBtn">Ask</button>
-              <button class="btn jumpBtn">Jump</button>
-              <button class="btn nextBtn">Next match</button>
-            </div>
-          </div>
-
-          <div class="stack" style="margin-top:6px">
-            <label>Messages</label>
-            <div class="msgs">${(t.messages||[]).map(m=>`${m.role==='user'?'You':'GPT'}: ${m.text}`).join('\n') || '(empty)'}</div>
-          </div>
+      convo.threads.forEach((t, i)=>{
+        const item = document.createElement('div');
+        item.className = 'thread-item' + (t.id === state.activeThreadId ? ' active' : '');
+        const preview = t.anchor ? t.anchor.substring(0, 25).trim() + (t.anchor.length > 25 ? '…' : '') : 'No anchor';
+        item.innerHTML = `
+          <div class="thread-title">T${i+1}</div>
+          <div class="muted" style="flex:1; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin: 0 8px;">${preview}</div>
+          <button class="btn small delete-thread-btn" data-id="${t.id}">X</button>
         `;
-        // wire up
-        card.querySelector('.anchor').addEventListener('change', async (e)=>{
-          t.anchor = e.target.value.trim();
-          await save();
-        });
-
-        card.querySelector('.askBtn').addEventListener('click', async ()=>{
-          const area = card.querySelector('.ask');
-          const user = area.value.trim(); if (!user) return;
-          area.value = '';
-          (t.messages ||= []).push({ role:'user', text:user, ts: Date.now() });
-          await save(); render();
-
-          // Build Context from anchor only (simple); you can expand to a separate context box if you want
-          const context = t.anchor || '';
-          const history = (t.messages || []).slice(-10);
-
-          try {
-            const { text } = await api.ask({
-              apiKey: state.apiKey,
-              model: state.model,
-              context, history, user
-            });
-            (t.messages ||= []).push({ role:'assistant', text, ts: Date.now() });
-            await save(); render();
-          } catch (e) {
-            (t.messages ||= []).push({ role:'assistant', text: `[error] ${e.message || e}`, ts: Date.now() });
-            await save(); render();
+        item.querySelector('.delete-thread-btn').addEventListener('click', async (e)=>{
+          e.stopPropagation();
+          if (!confirm('Delete this thread?')) return;
+          const currentConvo = getActiveConvo();
+          if (!currentConvo) return;
+          currentConvo.threads = currentConvo.threads.filter(thr => thr.id !== t.id);
+          if (state.activeThreadId === t.id) {
+            state.activeThreadId = currentConvo.threads[0]?.id || null;
           }
+          await save();
+          renderAll();
         });
-
-        card.querySelector('.jumpBtn').addEventListener('click', async ()=>{
-          if (!t.anchor) return;
-          try { await api.jumpToAnchor({ anchor: t.anchor, targetApp: 'ChatGPT' }); } catch {}
-        });
-
-        card.querySelector('.nextBtn').addEventListener('click', async ()=>{
-          try { await api.jumpNext({ targetApp: 'ChatGPT' }); } catch {}
-        });
-
-        list.appendChild(card);
+        item.addEventListener('click', async ()=>{ state.activeThreadId = t.id; await save(); renderAll(); });
+        list.appendChild(item);
       });
     }
 
-    // header controls
-    el('save').addEventListener('click', async ()=>{
-      state.apiKey = el('apiKey').value.trim();
-      state.model = el('model').value;
+    function renderCenter(){
+      const root = byId('centerContent');
+      const t = getActiveThread();
+      if (!t){
+        root.innerHTML = '<div class="muted">Select a thread on the left, or create a new one.</div>';
+        return;
+      }
+      root.innerHTML = `
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <input type="text" id="threadTitleInput" value="${(t.title||'').replace(/"/g,'"')}" style="font-weight:bold; font-size: 1.1em; border: 1px solid #ddd; padding: 4px; width: 100%;" />
+          </div>
+          <div class="stack" style="margin-top:8px">
+            <label>Anchor text (for Jump)</label>
+            <input type="text" id="anchorInput" value="${(t.anchor||'').replace(/"/g,'"')}" placeholder="Paste a long, unique snippet…">
+          </div>
+          <div class="stack" style="margin-top:8px">
+            <label>Future questions / notes</label>
+            <textarea id="notesInput" placeholder="Jot down ideas for later...">${t.notes || ''}</textarea>
+          </div>
+        </div>
+        <div class="card">
+          <div class="stack">
+            <label>Ask</label>
+            <textarea id="askArea" placeholder="Paste context or write a question…"></textarea>
+            <div class="row">
+              <button class="btn" id="askBtn">Ask</button>
+              <button class="btn" id="askConciseBtn">Ask Concise</button>
+              <div class="spacer" style="flex:1"></div>
+              <button class="btn" id="jumpBtn">Jump</button>
+              <button class="btn" id="nextBtn">Next match</button>
+            </div>
+          </div>
+          <div class="stack" style="margin-top:8px">
+            <label>Messages</label>
+            <div class="msgs" id="msgs"></div>
+          </div>
+        </div>
+      `;
+
+      // Wire up controls
+      byId('threadTitleInput').addEventListener('change', async (e)=>{ t.title = e.target.value.trim(); await save(); renderSidebar(); });
+      byId('anchorInput').addEventListener('change', async (e)=>{ t.anchor = e.target.value.trim(); await save(); renderSidebar(); });
+      byId('notesInput').addEventListener('change', async (e)=>{ t.notes = e.target.value.trim(); await save(); });
+      byId('askBtn').addEventListener('click', ()=>handleAsk(t, false));
+      byId('askConciseBtn').addEventListener('click', ()=>handleAsk(t, true));
+      byId('jumpBtn').addEventListener('click', async ()=>{ if (!t.anchor) return; try { await api.jumpToAnchor({ anchor: t.anchor, targetApp: state.targetApp }); } catch(e){ console.error(e); } });
+      byId('nextBtn').addEventListener('click', async ()=>{ try { await api.jumpNext({ targetApp: state.targetApp }); } catch(e){ console.error(e); } });
+
+      // Render messages
+      const box = byId('msgs');
+      if (!t.messages?.length){ box.textContent = '(empty)'; }
+      else {
+        t.messages.forEach(m=>{
+          const div = document.createElement('div');
+          div.className = 'msg ' + (m.role==='user' ? 'msg--user' : 'msg--ai');
+          div.textContent = m.text;
+          box.appendChild(div);
+        });
+        box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    function renderAll(){
+      renderHeader();
+      renderSidebar();
+      renderCenter();
+    }
+
+    // --- Ask Flow ---
+    async function handleAsk(t, isConcise){
+      const area = byId('askArea');
+      let user = area.value.trim(); if (!user) return;
+      if (isConcise) {
+        user = `Make your response to the following concise and simple to understand, not using any industry specific jargon:\n\n${user}`;
+      }
+      area.value = '';
+      (t.messages ||= []).push({ role:'user', text:user, ts: Date.now() });
+      renderCenter(); // quick render
+
+      const history = (t.messages || []).slice(-11, -1); // last 10 turns (user+ai)
+      try {
+        const { text } = await api.ask({ apiKey: state.apiKey, model: state.model, context: t.notes, history, user });
+        (t.messages ||= []).push({ role:'assistant', text, ts: Date.now() });
+      } catch (e) {
+        (t.messages ||= []).push({ role:'assistant', text: `[error] ${e.message || e}` , ts: Date.now() });
+      }
       await save();
-      el('status').textContent = state.apiKey ? 'API key is set.' : 'No key set.';
+      renderCenter();
+    }
+
+    // --- Event Listeners ---
+    byId('apiKey').addEventListener('change', async (e)=>{ state.apiKey = e.target.value.trim(); await save(); });
+    byId('model').addEventListener('change', async (e)=>{ state.model = e.target.value; await save(); });
+    byId('targetApp').addEventListener('change', async (e)=>{ state.targetApp = e.target.value; await save(); });
+
+    byId('convoSelect').addEventListener('change', async (e)=>{
+      state.activeConvoId = e.target.value;
+      const convo = getActiveConvo();
+      state.activeThreadId = convo?.threads[0]?.id || null;
+      await save();
+      renderAll();
     });
 
-    el('newThread').addEventListener('click', async ()=>{
-      state.threads.push({ title: `Thread ${state.threads.length+1}`, anchor: '', messages: [] });
-      await save(); render();
+    byId('newConvo').addEventListener('click', async ()=>{
+      const currentConversations = Array.isArray(state.conversations) ? state.conversations : [];
+      const newConvo = {
+        id: `convo-${Date.now()}`,
+        name: `Convo ${currentConversations.length + 1}`,
+        threads: []
+      };
+      state.conversations = [...currentConversations, newConvo];
+      state.activeConvoId = newConvo.id;
+      state.activeThreadId = null;
+      await save();
+      renderAll();
     });
 
+    byId('editConvo').addEventListener('click', ()=>{
+      const convo = getActiveConvo();
+      if (!convo) return;
+      byId('convo-display').style.display = 'none';
+      byId('convo-edit').style.display = 'flex';
+      byId('convoNameInput').value = convo.name;
+      byId('convoNameInput').focus();
+    });
+
+    byId('cancelConvoName').addEventListener('click', ()=>{
+      byId('convo-display').style.display = 'flex';
+      byId('convo-edit').style.display = 'none';
+    });
+
+    byId('saveConvoName').addEventListener('click', async ()=>{
+      const convo = getActiveConvo();
+      if (!convo) return;
+      const newName = byId('convoNameInput').value.trim();
+      if (newName) {
+        convo.name = newName;
+        await save();
+        renderHeader();
+      }
+      byId('convo-display').style.display = 'flex';
+      byId('convo-edit').style.display = 'none';
+    });
+
+    byId('deleteConvo').addEventListener('click', async ()=>{
+      const convo = getActiveConvo();
+      if (!convo) return;
+      if (!confirm(`Delete conversation "${convo.name}" and all its threads?`)) return;
+      state.conversations = state.conversations.filter(c => c.id !== convo.id);
+      state.activeConvoId = state.conversations[0]?.id || null;
+      state.activeThreadId = null;
+      await save();
+      renderAll();
+    });
+
+    byId('newThread').addEventListener('click', async ()=>{
+      const convo = getActiveConvo();
+      if (!convo) return alert('Create a conversation first.');
+      const thread = {
+        id: `thr-${Date.now()}`,
+        title: `Thread ${convo.threads.length+1}`,
+        anchor: '',
+        notes: '',
+        messages: []
+      };
+      convo.threads.push(thread);
+      state.activeThreadId = thread.id;
+      await save();
+      renderAll();
+    });
+
+    // Kickoff
     load();
   </script>
 </body>
